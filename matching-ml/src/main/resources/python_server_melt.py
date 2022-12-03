@@ -1358,6 +1358,196 @@ def run_openea():
 # Transformers section with helper functions
 ############################################
 
+def inner_simcse_training(request_headers):
+    try:
+        # https://github.com/UKPLab/sentence-transformers/issues/791#issuecomment-790402913
+        transformers_init(request_headers)
+
+        model_name = request_headers["model-name"]
+        tmp_dir = request_headers["tmp-dir"]
+        resulting_model_location = request_headers["resulting-model-location"]
+        training_file = request_headers["training-file"]
+
+        sentence_loss = request_headers["loss"]
+        train_batch_size = int(request_headers["train-batch-size"])
+        test_batch_size = int(request_headers["test-batch-size"])
+        num_epochs = int(request_headers["num-epochs"])
+        cache_folder_path = (
+            request_headers["transformers-cache"]
+            if "transformers-cache" in request_headers
+            else None
+        )
+
+        from sentence_transformers import SentenceTransformer, InputExample, losses
+
+        model = SentenceTransformer(model_name, cache_folder=cache_folder_path)
+
+
+        parser = lambda row: InputExample(texts=[row[0], row[1]])
+        train_loss = losses.MultipleNegativesRankingLoss(model)
+
+        def read_input_examples(file_path, input_example_generator):
+            input_examples = []
+            with open(file_path, encoding="utf-8") as csvfile:
+                for row in csv.reader(csvfile, delimiter="\t"):
+                    input_examples.append(input_example_generator(row))
+            return input_examples
+
+        all_input_examples = read_input_examples(training_file, parser)
+        train_examples = all_input_examples
+        app.logger.info("Train set size: %s.", len(train_examples))
+
+        # if "validation-file" in request_headers:
+        #     train_examples = all_input_examples
+        #     validation_examples = read_input_examples(
+        #         request_headers["validation-file"], parser
+        #     )
+        #     app.logger.info(
+        #         "Use separate train and validation file: %s train and %s validation.",
+        #         len(train_examples),
+        #         len(validation_examples),
+        #     )
+        # else:
+        #     test_size = float(request_headers["test-size"])
+        #     from sklearn.model_selection import train_test_split
+        #
+        #     train_examples, validation_examples = train_test_split(
+        #         all_input_examples,
+        #         stratify=[i.label for i in all_input_examples],
+        #         test_size=test_size,
+        #     )
+        #     app.logger.info(
+        #         "Loaded %s examples. Do a split(validation percentage: %s): %s are training and %s are validation",
+        #         len(all_input_examples),
+        #         test_size,
+        #         len(train_examples),
+        #         len(validation_examples),
+        #     )
+
+        from sentence_transformers.evaluation import EmbeddingSimilarityEvaluator
+        from torch.utils.data import DataLoader
+        import math
+
+        train_dataloader = DataLoader(
+            train_examples, shuffle=True, batch_size=train_batch_size
+        )
+#        evaluator = EmbeddingSimilarityEvaluator.from_input_examples(
+#            validation_examples, write_csv=True, batch_size=test_batch_size
+#        )
+        warmup_steps = math.ceil(
+            len(train_dataloader) * num_epochs * 0.1
+        )  # 10% of train data for warm-up
+
+        app.logger.info("Run the training now")
+        model.fit(
+            train_objectives=[(train_dataloader, train_loss)],
+            epochs=num_epochs,
+            warmup_steps=warmup_steps,
+            save_best_model=True,
+            output_path=resulting_model_location,
+#            evaluator=evaluator,
+        )
+
+        return model.best_score  # this will return a float value with the best score
+    except Exception as e:
+        import traceback
+
+        return "ERROR " + traceback.format_exc()
+
+@app.route("/simcse-training", methods=["GET"])
+def simcse_training():
+    result = run_function_multi_process(request, inner_simcse_training)
+    if isinstance(result, str):
+        return result
+    else:
+        return jsonify(result)
+
+# @app.route("/simcse-training", methods=["GET"])
+# def simcse_training():
+#         from torch.utils.data import DataLoader
+#     #    transformers_init(request_headers)
+#
+#     import math
+#     from sentence_transformers import models, losses
+#     from sentence_transformers import LoggingHandler, SentenceTransformer, InputExample
+#     import logging
+#     from datetime import datetime
+#     import gzip
+#     import sys
+#     import tqdm
+#
+#     #### Just some code to print debug information to stdout
+#     logging.basicConfig(format='%(asctime)s - %(message)s',
+#                         datefmt='%Y-%m-%d %H:%M:%S',
+#                         level=logging.INFO,
+#                         handlers=[LoggingHandler()])
+#     #### /print debug information to stdout
+#
+#     # Training parameters # todo: Provide via HTTP headers of the request
+#     model_name = 'distilroberta-base'
+# #    train_batch_size = 128
+#     train_batch_size = int(request_headers["train-batch-size"])
+#     max_seq_length = 32
+#     num_epochs = 1
+#     sentence_file = request_headers["training-data-file-path"]
+#     tmp_dir = request_headers["tmp_dir"]
+#     # model_path =  request_headers["training-data-file-path"]
+#
+#     # Save path to store our model
+#
+#     with tempfile.TemporaryDirectory(dir=tmp_dir) as tmpdirname:
+#         initial_arguments = {
+#             "report_to": "none",
+#             #'disable_tqdm' : True,
+#         }
+#         fixed_arguments = {
+#             "output_dir": os.path.join(tmpdirname, "trainer_output_dir")
+#         }
+#
+#     # model_path == output_dir?
+#
+#     output_name = ''
+#     # was ist der output_name?
+#     output_name = "-"+model_path.replace(" ", "_").replace("/", "_").replace("\\", "_")
+#
+#     # todo: change the following so that it is similar to what the prediction method uses
+#     model_output_path = 'output/train_simcse{}-{}'.format(output_name, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+#
+#
+#     # Use Huggingface/transformers model (like BERT, RoBERTa, XLNet, XLM-R) for mapping tokens to embeddings
+#     word_embedding_model = models.Transformer(model_name, max_seq_length=max_seq_length)
+#
+#     # Apply mean pooling to get one fixed sized sentence vector
+#     pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension())
+#     model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
+#
+#     ################# Read the train corpus  #################
+#     train_samples = []
+#     with gzip.open(sentence_file, 'rt', encoding='utf8') if sentence_file.endswith('.gz') else open(sentence_file, encoding='utf8') as fIn:
+#         for line in tqdm.tqdm(fIn, desc='Read file'):
+#             line = line.strip()
+#             if len(line) >= 10:
+#                 train_samples.append(InputExample(texts=[line, line]))
+#
+#
+#     logging.info("Train sentences: {}".format(len(train_samples)))
+#
+#     # We train our model using the MultipleNegativesRankingLoss
+#     train_dataloader = DataLoader(train_samples, shuffle=True, batch_size=train_batch_size, drop_last=True)
+#     train_loss = losses.MultipleNegativesRankingLoss(model)
+#
+#     warmup_steps = math.ceil(len(train_dataloader) * num_epochs * 0.1)  # 10% of train data for warm-up
+#     logging.info("Warmup-steps: {}".format(warmup_steps))
+#
+#     # Train the model
+#     model.fit(train_objectives=[(train_dataloader, train_loss)],
+#               epochs=num_epochs,
+#               warmup_steps=warmup_steps,
+#               optimizer_params={'lr': 5e-5},
+#               checkpoint_path=fixed_arguments['output_dir'],
+#               show_progress_bar=True,
+#               use_amp=False  # Set to True, if your GPU supports FP16 cores
+#               )
 
 def transformers_create_dataset(
     using_tensorflow, tokenizer, left_sentences, right_sentences, labels=None
@@ -2227,7 +2417,7 @@ def inner_sentencetransformers_finetuning(request_headers):
         def read_input_examples(file_path, input_example_generator):
             input_examples = []
             with open(file_path, encoding="utf-8") as csvfile:
-                for row in csv.reader(csvfile, delimiter=","):
+                for row in csv.reader(csvfile, delimiter="\t"):
                     input_examples.append(input_example_generator(row))
             return input_examples
 

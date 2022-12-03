@@ -4,13 +4,12 @@ import de.uni_mannheim.informatik.dws.melt.matching_base.FileUtil;
 import de.uni_mannheim.informatik.dws.melt.matching_base.typetransformer.basetransformers.TypeTransformerHelper;
 import de.uni_mannheim.informatik.dws.melt.matching_jena.ResourcesExtractor;
 import de.uni_mannheim.informatik.dws.melt.yet_another_alignment_api.Alignment;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
+
+import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -25,6 +24,8 @@ import de.uni_mannheim.informatik.dws.melt.yet_another_alignment_api.Corresponde
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.Set;
+import java.util.stream.Stream;
+
 import org.apache.jena.ontology.OntProperty;
 import org.apache.jena.ontology.OntResource;
 
@@ -60,6 +61,7 @@ public class SentenceTransformersMatcher extends TransformersBase {
     
     @Override
     public Alignment match(OntModel source, OntModel target, Alignment inputAlignment, Properties parameters) throws Exception {
+//        File trainingsDataDir = new File("/Users/D070310/Desktop/Masterthesis/neuEx/trainingsData/crawling/");
         
         if(inputAlignment == null)
             inputAlignment = new Alignment();
@@ -83,11 +85,50 @@ public class SentenceTransformersMatcher extends TransformersBase {
                 }
             }
             finally{
+
+                //------------MOVE TO ANOTHER FUNCTION-------
+//                File sourceFile = FileUtil.createFolderWithRandomNumberInDirectory(trainingsDataDir, "source");
+//                File targeFile = FileUtil.createFolderWithRandomNumberInDirectory(trainingsDataDir, "target");
+//                corpus.renameTo(sourceFile);
+//                queries.renameTo(targeFile);
+                LOGGER.info("Files stored");
+                //------------MOVE TO ANOTHER FUNCTION-------
                 corpus.delete();
                 queries.delete();
             }
         }
+        //this.mergeFiles(trainingsDataDir);
+        LOGGER.info("Files moved");
         return inputAlignment;
+    }
+
+    private void mergeFiles(File trainingsDataDir) throws IOException, RuntimeException {
+
+        // move all files contained in "/Users/D070310/Desktop/Masterthesis/neuEx/trainingsData/crawling" to /Users/D070310/Desktop/Masterthesis/neuEx/trainingsData/sentences.txt
+            String output = "/Users/D070310/Desktop/Masterthesis/neuEx/trainingsData/sentences.csv";
+            Path directory = Paths.get(trainingsDataDir.toString());
+
+            Stream<Path> filesToProcess = Files.list(directory);
+            filesToProcess.forEach(path -> {
+                Stream<String> lines;
+                try {
+                    lines = Files.lines(path);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                lines.forEach(line -> {
+                    try(FileOutputStream fos = new FileOutputStream(output, true);
+                        OutputStreamWriter osw = new OutputStreamWriter(fos, StandardCharsets.UTF_8);
+                        BufferedWriter bw = new BufferedWriter(osw);
+                        PrintWriter out = new PrintWriter(bw))
+                    {
+                        out.println(line + "\t" + line);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+
+                });
+            });
     }
     
     

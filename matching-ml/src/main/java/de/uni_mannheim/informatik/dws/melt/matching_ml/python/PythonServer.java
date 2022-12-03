@@ -1,18 +1,12 @@
 package de.uni_mannheim.informatik.dws.melt.matching_ml.python;
 
-import de.uni_mannheim.informatik.dws.melt.matching_ml.python.nlptransformers.TransformersFineTuner;
-import de.uni_mannheim.informatik.dws.melt.matching_ml.python.nlptransformers.TransformersBase;
-import de.uni_mannheim.informatik.dws.melt.matching_ml.python.nlptransformers.TransformersFilter;
-import de.uni_mannheim.informatik.dws.melt.matching_ml.python.nlptransformers.TransformersFineTunerHpSearch;
+import de.uni_mannheim.informatik.dws.melt.matching_ml.python.nlptransformers.*;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.uni_mannheim.informatik.dws.melt.matching_base.FileUtil;
-import de.uni_mannheim.informatik.dws.melt.matching_ml.python.nlptransformers.SentenceTransformersFineTuner;
-import de.uni_mannheim.informatik.dws.melt.matching_ml.python.nlptransformers.SentenceTransformersMatcher;
-import de.uni_mannheim.informatik.dws.melt.matching_ml.python.nlptransformers.TransformersBaseFineTuner;
 import de.uni_mannheim.informatik.dws.melt.yet_another_alignment_api.Alignment;
 import de.uni_mannheim.informatik.dws.melt.yet_another_alignment_api.Correspondence;
 import org.apache.commons.io.FileUtils;
@@ -136,6 +130,17 @@ public class PythonServer {
      * Transformer section
      ***********************************/
 
+//    public void simCSETraining(File trainingDataFile) throws PythonServerException{
+//        HttpGet request = new HttpGet(serverUrl + "simcse-training");
+//        request.addHeader("tmp-dir", getCanonicalPath(FileUtil.getUserTmpFolder()));
+//        //transformersUpdateBaseRequest(model, request);
+//
+//        request.addHeader("training-data-file-path", getCanonicalPath(trainingDataFile));
+//        // todo: provide path to store the model -> path from which transformersFineTuning can load the model in a later step
+//
+//        runRequest(request);
+//    }
+
     /**
      * Run a hyperparameter fine tuning.
      * @param hpsearch the hyper parameter search model to use
@@ -246,6 +251,28 @@ public class PythonServer {
         if(validationFile != null)
             request.addHeader("validation-file", getCanonicalPath(validationFile));
         
+        String resultString = runRequest(request);
+        try {
+            return JSON_MAPPER.readValue(resultString, Float.class);
+        } catch (JsonProcessingException ex) {
+            throw new PythonServerException("Could not parse JSON", ex);
+        }
+    }
+
+    public float simcseTraining(SimcseTrainer fineTuner, File trainingFile, File validationFile) throws PythonServerException{
+
+        HttpGet request = new HttpGet(serverUrl + "/simcse-training");
+        transformersUpdateBaseRequest(fineTuner, request);
+        transformersFineTunerUpdateBaseRequest(fineTuner, trainingFile, request);
+
+        request.addHeader("loss", fineTuner.getLoss().name());
+        request.addHeader("test-size", Float.toString(fineTuner.getTestSize()));
+        request.addHeader("train-batch-size", Integer.toString(fineTuner.getTrainBatchSize()));
+        request.addHeader("test-batch-size", Integer.toString(fineTuner.getTestBatchSize()));
+        request.addHeader("num-epochs", Integer.toString(fineTuner.getNumberOfEpochs()));
+        if(validationFile != null)
+            request.addHeader("validation-file", getCanonicalPath(validationFile));
+
         String resultString = runRequest(request);
         try {
             return JSON_MAPPER.readValue(resultString, Float.class);
