@@ -122,7 +122,7 @@ public class SentenceTransformersMatcher extends TransformersBase {
                         BufferedWriter bw = new BufferedWriter(osw);
                         PrintWriter out = new PrintWriter(bw))
                     {
-                        out.println(line + "\t" + line);
+                        out.println(line);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }

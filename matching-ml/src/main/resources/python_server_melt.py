@@ -1382,8 +1382,7 @@ def inner_simcse_training(request_headers):
 
         model = SentenceTransformer(model_name, cache_folder=cache_folder_path)
 
-
-        parser = lambda row: InputExample(texts=[row[0], row[1]])
+        parser = lambda row: InputExample(texts=[row[0], row[0]])
         train_loss = losses.MultipleNegativesRankingLoss(model)
 
         def read_input_examples(file_path, input_example_generator):
