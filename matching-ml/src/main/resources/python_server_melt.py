@@ -15,6 +15,7 @@ import tempfile
 import re
 from datetime import datetime
 from collections import defaultdict
+import copy
 
 logging.basicConfig(
     handlers=[
@@ -927,15 +928,48 @@ def __project_embeddings_to_lexicon_subset(
     return np.array(source_subset_vectors), np.array(target_subset_vectors)
 
 
+def upconvert_old_vocab(old_keyed_vector):
+    """Convert a loaded, pre-gensim-4.0.0 version instance that had a 'vocab' dict of data objects."""
+    old_vocab = self.__dict__.pop('vocab', None)
+    self.key_to_index = {}
+    for k in old_vocab.keys():
+        old_v = old_vocab[k]
+        self.key_to_index[k] = old_v.index
+        for attr in old_v.__dict__.keys():
+            self.set_vecattr(old_v.index, attr, old_v.__dict__[attr])
+    # special case to enforce required type on `sample_int`
+    if 'sample_int' in self.expandos:
+        self.expandos['sample_int'] = self.expandos['sample_int'].astype(np.uint32)
+
+
+# def __create_keyed_vector(old_keyed_vector, new_matrix):
+#     vector_size = new_matrix.shape[1]
+#     keyed_vector = models.KeyedVectors(vector_size)
+#     keyed_vector.vector_size = vector_size
+#     keyed_vector.vocab = upconvert_old_vocab(old_keyed_vector)
+#     keyed_vector.set_vecattr()
+#     keyed_vector.index2word = old_keyed_vector.index2word
+#     keyed_vector.vectors = new_matrix
+#     assert (len(old_keyed_vector), vector_size) == keyed_vector.vectors.shape
+#     return keyed_vector
+
+
 def __create_keyed_vector(old_keyed_vector, new_matrix):
     vector_size = new_matrix.shape[1]
-    keyed_vector = models.KeyedVectors(vector_size)
+    keyed_vector = copy.deepcopy(old_keyed_vector)
     keyed_vector.vector_size = vector_size
-    keyed_vector.vocab = old_keyed_vector.vocab
-    keyed_vector.index2word = old_keyed_vector.index2word
     keyed_vector.vectors = new_matrix
-    assert (len(old_keyed_vector.vocab), vector_size) == keyed_vector.vectors.shape
+    assert (len(old_keyed_vector), vector_size) == keyed_vector.vectors.shape
     return keyed_vector
+    # old
+    #vector_size = new_matrix.shape[1]
+    #keyed_vector = models.KeyedVectors(vector_size)
+    #keyed_vector.vector_size = vector_size
+    #keyed_vector.vocab = old_keyed_vector.vocab
+    #keyed_vector.index2word = old_keyed_vector.index2word
+    #keyed_vector.vectors = new_matrix
+    #assert (len(old_keyed_vector.vocab), vector_size) == keyed_vector.vectors.shape
+    #return keyed_vector
 
 
 def analyze(word_vector_src, word_vector_tgt, lexicon):
@@ -983,6 +1017,57 @@ def linear_projection(word_vector_src, word_vector_tgt, lexicon):
         word_vector_src, np.dot(word_vector_src.vectors, w)
     )
     return source_projected, word_vector_tgt
+
+
+def biLSTM_projection(word_vector_src, word_vector_tgt, lexicon):
+    from keras.models import Sequential
+    from keras.layers import Dense, Dropout, Bidirectional, LSTM
+    from keras.optimizers import SGD
+    from keras import losses
+
+    matrix_src, matrix_tgt = __project_embeddings_to_lexicon_subset(
+        word_vector_src, word_vector_tgt, lexicon
+    )
+# todo: write matrix_src und matrix_tgt to file, which is as large as possible
+    if matrix_src.size == 0 or matrix_tgt.size == 0:
+        raise Exception(
+            "The embeddings do not contain enough vector for the input alignment."
+        )
+
+    model = Sequential()
+    model.add(
+        Bidirectional(
+            LSTM(
+                768,
+                return_sequences=True,
+                dropout=0.4))
+
+    )
+    model.add(
+        Bidirectional(
+            LSTM(
+                384,
+                 return_sequences=True
+            )
+        )
+    )
+
+    sgd = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(
+        loss=losses.mean_squared_error,
+        optimizer=sgd,
+        metrics=[losses.mean_squared_error],
+    )
+
+    model.fit(matrix_src, matrix_tgt, epochs=2000, batch_size=128)
+
+    source_projected = model.predict(word_vector_src.vectors)
+    source_projected_keyed_vector = __create_keyed_vector(
+        word_vector_src, source_projected
+    )
+    return source_projected_keyed_vector, word_vector_tgt
+
+#  weniger komplexes network wählen!
 
 
 def neural_net_projection(word_vector_src, word_vector_tgt, lexicon):
@@ -1381,18 +1466,23 @@ def inner_simcse_training(request_headers):
         from sentence_transformers import SentenceTransformer, InputExample, losses
 
         model = SentenceTransformer(model_name, cache_folder=cache_folder_path)
-
         parser = lambda row: InputExample(texts=[row[0], row[0]])
         train_loss = losses.MultipleNegativesRankingLoss(model)
 
         def read_input_examples(file_path, input_example_generator):
             input_examples = []
             with open(file_path, encoding="utf-8") as csvfile:
-                for row in csv.reader(csvfile, delimiter="\t"):
-                    input_examples.append(input_example_generator(row))
+                for idx, row in enumerate(csv.reader(csvfile, delimiter="\t")):
+                    try:
+                        input_examples.append(input_example_generator(row))
+                    except IndexError:
+                        app.logger.info("ERROR row_number: " + str(idx) + "Row:" + str(row))
+
+
             return input_examples
 
         all_input_examples = read_input_examples(training_file, parser)
+
         train_examples = all_input_examples
         app.logger.info("Train set size: %s.", len(train_examples))
 
